@@ -2,7 +2,7 @@
 %{!?_httpd_mmn: %global _httpd_mmn %(cat %{_includedir}/httpd/.mmn 2>/dev/null || echo 0-0)}
 
 Name:           mod_md
-Version:        2.4.19
+Version:        2.4.26
 Release:        1%{?dist}
 Summary:        Certificate provisioning using ACME for the Apache HTTP Server
 License:        ASL 2.0
@@ -59,6 +59,13 @@ echo "LoadModule md_module modules/mod_md.so" > %{buildroot}%{_httpd_modconfdir}
 %{_mandir}/man1/*
 
 %changelog
+* Mon May 20 2024 Luboš Uhliarik <luhliari@redhat.com> - 1:2.4.26-1
+- Resolves: RHEL-25075 - new version 2.4.26
+- Resolves: RHEL-11838 - [RFE] add support of dns_01 challenge to mod_md
+- Resolves: RHEL-17462 - OCSP response rejected when nextUpdate field not set
+- Resolves: RHEL-17467 - mod_md should trigger the reissue of new pair
+  key/certificate when OCSP reports a revoked status
+
 * Tue Nov 08 2022 Luboš Uhliarik <luhliari@redhat.com> - 1:2.4.19-1
 - Resolves: #2140979 - mod_md rebase to 2.4.19
 
