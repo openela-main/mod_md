@@ -3,12 +3,13 @@
 
 Name:           mod_md
 Version:        2.4.26
-Release:        1%{?dist}
+Release:        1%{?dist}.1
 Summary:        Certificate provisioning using ACME for the Apache HTTP Server
 License:        ASL 2.0
 URL:            https://icing.github.io/mod_md/
 Source0:        https://github.com/icing/mod_md/releases/download/v%{version}/mod_md-%{version}.tar.gz
 Patch1:         mod_md-2.0.8-state_dir.patch
+Patch2:         mod_md-2.4.26-CVE-2025-55753.patch
 BuildRequires:  make
 BuildRequires:  gcc
 BuildRequires:  pkgconfig, httpd-devel >= 2.4.41, openssl-devel >= 1.1.0, jansson-devel, libcurl-devel, xmlto
@@ -59,6 +60,10 @@ echo "LoadModule md_module modules/mod_md.so" > %{buildroot}%{_httpd_modconfdir}
 %{_mandir}/man1/*
 
 %changelog
+* Tue Dec 09 2025 Luboš Uhliarik <luhliari@redhat.com> - 1:2.4.26-1.1
+- Resolves: RHEL-134496 - httpd: Apache HTTP Server: mod_md (ACME), unintended
+  retry intervals (CVE-2025-55753)
+
 * Mon May 20 2024 Luboš Uhliarik <luhliari@redhat.com> - 1:2.4.26-1
 - Resolves: RHEL-25075 - new version 2.4.26
 - Resolves: RHEL-11838 - [RFE] add support of dns_01 challenge to mod_md
