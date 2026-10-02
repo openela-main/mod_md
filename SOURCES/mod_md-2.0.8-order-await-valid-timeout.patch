@@ -1,0 +1,118 @@
+Resolves: RHEL-251674 - Fix segfault when await_valid times out and prevent repeated CSR on restart
+
+Three related fixes backported from upstream commit
+f1699a803562af69a61c548489dcbe660df2da42 and upstream issue #351:
+
+1. md_acme_order_monitor_authzs(), md_acme_order_await_ready(), and
+   md_acme_order_await_valid() all call md_util_try() and return its rv,
+   but none of them record the error in result->status when md_util_try()
+   times out (APR_TIMEUP) or returns another failure.  As a result,
+   md_acmev2_drive_renew() returns result->status == APR_SUCCESS to its
+   caller even though the underlying operation failed, and acme_renew()
+   proceeds to call ad_chain_retrieve() with an incomplete order, causing
+   a segfault (RHEL-251674) or misleading errors.
+
+   Fix: in each of the three functions, set result->status from rv when
+   md_util_try() returns non-success and result->status is still APR_SUCCESS.
+   This matches the intent described in upstream issue #351.
+
+2. md_acme_drive_setup_certificate() (which submits the CSR to the ACME
+   /finalize endpoint) was called unconditionally after await_ready().
+   However, await_ready() returns APR_SUCCESS for PROCESSING and VALID
+   states as well as READY, so after a crash/restart where finalize was
+   already sent, the CSR is re-submitted and the ACME server returns 403.
+
+   Fix: only call md_acme_drive_setup_certificate() when order->status is
+   MD_ACME_ORDER_ST_READY.
+
+3. The certificate URL check after await_valid() had an inverted condition:
+   it jumped to leave (success) when the URL was present, but fell through
+   to the error md_result_set() when it was absent — the opposite of the
+   intended logic.  Also, the success path never explicitly set
+   result->status = APR_SUCCESS, which could leave a stale error status
+   from a previous operation in the result object.
+
+   Fix: invert the condition and add an explicit md_result_set(APR_SUCCESS)
+   on the success path.
+
+Upstream references:
+  https://github.com/icing/mod_md/issues/351
+  https://github.com/icing/mod_md/commit/f1699a803562af69a61c548489dcbe660df2da42
+
+Co-authored-by: Claude Sonnet 4.6 <noreply@anthropic.com>
+diff --git a/src/md_acme_order.c b/src/md_acme_order.c
+index 9314f20..05952f3 100644
+--- a/src/md_acme_order.c
++++ b/src/md_acme_order.c
+@@ -383,6 +383,9 @@ apr_status_t md_acme_order_await_ready(md_acme_order_t *order, md_acme_t *acme,
+ 
+     md_result_activity_setn(result, "Waiting for order to become ready");
+     rv = md_util_try(await_ready, &ctx, 0, timeout, 0, 0, 1);
++    if (APR_SUCCESS != rv && APR_SUCCESS == result->status) {
++        md_result_set(result, rv, "Waiting for order to become ready");
++    }
+     md_result_log(result, MD_LOG_DEBUG);
+     return rv;
+ }
+@@ -421,6 +424,9 @@ apr_status_t md_acme_order_await_valid(md_acme_order_t *order, md_acme_t *acme,
+ 
+     md_result_activity_setn(result, "Waiting for finalized order to become valid");
+     rv = md_util_try(await_valid, &ctx, 0, timeout, 0, 0, 1);
++    if (APR_SUCCESS != rv && APR_SUCCESS == result->status) {
++        md_result_set(result, rv, "Waiting for finalized order to become valid");
++    }
+     md_result_log(result, MD_LOG_DEBUG);
+     return rv;
+ }
+@@ -531,6 +537,9 @@ apr_status_t md_acme_order_monitor_authzs(md_acme_order_t *order, md_acme_t *acm
+     
+     md_result_activity_printf(result, "Monitoring challenge status for %s", md->name);
+     rv = md_util_try(check_challenges, &ctx, 0, timeout, 0, 0, 1);
++    if (APR_SUCCESS != rv && APR_SUCCESS == result->status) {
++        md_result_set(result, rv, "Monitoring challenge status");
++    }
+     md_log_perror(MD_LOG_MARK, MD_LOG_INFO, rv, p, "%s: checked authorizations", md->name);
+     return rv;
+ }
+diff --git a/src/md_acmev2_drive.c b/src/md_acmev2_drive.c
+index cd5214d..92dcef7 100644
+--- a/src/md_acmev2_drive.c
++++ b/src/md_acmev2_drive.c
+@@ -142,21 +142,27 @@ apr_status_t md_acmev2_drive_renew(md_acme_driver_t *ad, md_proto_driver_t *d, m
+                                       ad->authz_monitor_timeout, result, d->p);
+     if (APR_SUCCESS != rv) goto leave;
+     
+-    rv = md_acme_order_await_ready(ad->order, ad->acme, d->md, 
++    rv = md_acme_order_await_ready(ad->order, ad->acme, d->md,
+                                    ad->authz_monitor_timeout, result, d->p);
+     if (APR_SUCCESS != rv) goto leave;
+-    
+-    rv = md_acme_drive_setup_certificate(d, result);
+-    if (APR_SUCCESS != rv) goto leave;
+-    
+-    md_log_perror(MD_LOG_MARK, MD_LOG_INFO, 0, d->p, "%s: finalized order", d->md->name);
+-    
+-    rv = md_acme_order_await_valid(ad->order, ad->acme, d->md, 
++
++    /* Only submit CSR when order is READY; skip if already PROCESSING or VALID
++     * (e.g. after a restart where finalize was already sent successfully) */
++    if (MD_ACME_ORDER_ST_READY == ad->order->status) {
++        rv = md_acme_drive_setup_certificate(d, result);
++        if (APR_SUCCESS != rv) goto leave;
++        md_log_perror(MD_LOG_MARK, MD_LOG_INFO, 0, d->p, "%s: finalized order", d->md->name);
++    }
++
++    rv = md_acme_order_await_valid(ad->order, ad->acme, d->md,
+                                    ad->authz_monitor_timeout, result, d->p);
+     if (APR_SUCCESS != rv) goto leave;
+     
+-    if (ad->order->certificate) goto leave;
+-    md_result_set(result, APR_EINVAL, "Order valid, but certifiate url is missing.");
++    if (!ad->order->certificate) {
++        md_result_set(result, APR_EINVAL, "Order valid, but certifiate url is missing.");
++        goto leave;
++    }
++    md_result_set(result, APR_SUCCESS, NULL);
+ 
+ leave:    
+     md_result_log(result, MD_LOG_DEBUG);

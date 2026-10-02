@@ -3,7 +3,7 @@
 
 Name:           mod_md
 Version:        2.0.8
-Release:        8%{?dist}.2
+Release:        8%{?dist}.4
 Summary:        Certificate provisioning using ACME for the Apache HTTP Server
 License:        ASL 2.0
 URL:            https://icing.github.io/mod_md/
@@ -14,6 +14,7 @@ Patch1:         mod_md-2.0.8-state_dir.patch
 Patch2:         mod_md-2.0.8-duptrim-seg.patch
 Patch3:         mod_md-2.0.8-tolerate-missing-res.patch
 Patch4:         mod_md-2.0.8-CVE-2025-55753.patch
+Patch5:         mod_md-2.0.8-order-await-valid-timeout.patch
 BuildRequires:  gcc
 BuildRequires:  pkgconfig, httpd-devel >= 2.4.37, openssl-devel >= 1.1.0, jansson-devel, libcurl-devel
 BuildRequires:  xmlto
@@ -33,6 +34,7 @@ domains and their virtual hosts automatically, including at renewal.
 %patch2 -p1 -b .dup_trim
 %patch3 -p1 -b .tol_missing_res
 %patch4 -p1 -b .CVE-2025-55753
+%patch5 -p1 -b .order-await-valid-timeout
 
 xmlto man $RPM_SOURCE_DIR/a2md.xml
 
@@ -72,6 +74,13 @@ install -m 644 -p a2md.1 $RPM_BUILD_ROOT%{_mandir}/man1
 %{_mandir}/man1/*
 
 %changelog
+* Thu Sep 03 2026 Martin Osvald <mosvald@redhat.com> - 1:2.0.8-8.4
+- Resolves: RHEL-251674 - fix segfault when await_valid times out and
+  prevent repeated CSR submission after restart
+
+* Wed Aug 26 2026 Martin Osvald <mosvald@redhat.com> - 1:2.0.8-8.3
+- Resolves: RHEL-247701 - fix CPU spikes from CVE-2025-55753 patch
+
 * Tue Dec 09 2025 Luboš Uhliarik <luhliari@redhat.com> - 1:2.0.8-8.2
 - Resolves: RHEL-134487 - httpd:2.4/httpd: Apache HTTP Server: mod_md (ACME),
   unintended retry intervals (CVE-2025-55753)
